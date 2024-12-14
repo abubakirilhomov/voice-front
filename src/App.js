@@ -45,7 +45,9 @@ const App = () => {
 
   const createPeerConnection = (target) => {
     peerConnection.current = new RTCPeerConnection();
-    stream.getTracks().forEach((track) => peerConnection.current.addTrack(track, stream));
+    stream
+      .getTracks()
+      .forEach((track) => peerConnection.current.addTrack(track, stream));
 
     peerConnection.current.onicecandidate = (event) => {
       if (event.candidate) {
@@ -67,25 +69,32 @@ const App = () => {
     if (!peerConnection.current) {
       createPeerConnection(target);
     }
-
-    const offer = await peerConnection.current.createOffer();
-    await peerConnection.current.setLocalDescription(offer);
-
-    socket.current.emit("signal", {
-      target,
-      signal: offer,
-    });
+    if (stream) {
+      const offer = await peerConnection.current.createOffer();
+      await peerConnection.current.setLocalDescription(offer);
+      socket.current.emit("signal", {
+        target,
+        signal: offer,
+      });
+    } else {
+      console.error("Stream not available for call");
+    }
   };
 
   const selectUser = (user) => {
     setCurrentUser(user);
     if (!stream) {
-      navigator.mediaDevices.getUserMedia({ audio: true }).then((localStream) => {
-        setStream(localStream);
-        const localAudio = document.getElementById("local-audio");
-        localAudio.srcObject = localStream;
-        localAudio.play();
-      });
+      navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then((localStream) => {
+          setStream(localStream);
+          const localAudio = document.getElementById("local-audio");
+          localAudio.srcObject = localStream;
+          localAudio.play();
+        })
+        .catch((error) => {
+          console.error("Error accessing media devices:", error);
+        });
     }
   };
 
@@ -101,7 +110,8 @@ const App = () => {
             style={{
               cursor: "pointer",
               padding: "10px",
-              backgroundColor: currentUser?.id === user.id ? "#f0f0f0" : "transparent",
+              backgroundColor:
+                currentUser?.id === user.id ? "#f0f0f0" : "transparent",
             }}
           >
             {user.name || `Пользователь ${user.id}`}
@@ -113,7 +123,9 @@ const App = () => {
       <div style={{ flex: 2, padding: "10px" }}>
         {currentUser ? (
           <>
-            <h3>Кабинет: {currentUser.name || `Пользователь ${currentUser.id}`}</h3>
+            <h3>
+              Кабинет: {currentUser.name || `Пользователь ${currentUser.id}`}
+            </h3>
             <button onClick={() => startCall(currentUser.id)}>Позвонить</button>
           </>
         ) : (

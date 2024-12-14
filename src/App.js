@@ -1,143 +1,115 @@
-import React, { useState, useEffect, useRef } from "react";
-import { io } from "socket.io-client";
+import React, { useRef, useState, useEffect } from "react";
+import io from "socket.io-client";
 
-const App = () => {
+const VoiceChat = () => {
+  const [users, setUsers] = useState([]); // Connected users
+  const [localStream, setLocalStream] = useState(null); // Local media stream
+  const [remoteStream, setRemoteStream] = useState(null); // Remote media stream
+  const [target, setTarget] = useState(null); // Target user to connect with
+
   const socket = useRef(null);
-  const [users, setUsers] = useState([]);
-  const [currentUser, setCurrentUser] = useState(null);
-  const [stream, setStream] = useState(null);
   const peerConnection = useRef(null);
 
-  useEffect(() => {
-    // Подключение к серверу WebSocket
-    socket.current = io("https://voice-server-qsaq.onrender.com"); // Укажите ваш сервер
+  const ICE_SERVERS = {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" }, // Public STUN server
+    ],
+  };
 
-    // Получение списка пользователей
-    socket.current.on("users", (userList) => {
-      setUsers(userList);
+  useEffect(() => {
+    // Initialize Socket.IO connection
+    socket.current = io("https://voice-server-qsaq.onrender.com");
+
+    // Receive connected users
+    socket.current.on("users", (connectedUsers) => {
+      setUsers(connectedUsers.filter((u) => u.id !== socket.current.id)); // Exclude self
     });
 
-    // Обработка сигналов WebRTC
+    // Handle incoming signal
     socket.current.on("signal", async ({ sender, signal }) => {
-      if (!peerConnection.current) {
-        createPeerConnection(sender);
-      }
-
-      await peerConnection.current.setRemoteDescription(
-        new RTCSessionDescription(signal)
-      );
-
       if (signal.type === "offer") {
+        await peerConnection.current.setRemoteDescription(new RTCSessionDescription(signal));
         const answer = await peerConnection.current.createAnswer();
         await peerConnection.current.setLocalDescription(answer);
-
-        socket.current.emit("signal", {
-          target: sender,
-          signal: peerConnection.current.localDescription,
-        });
+        socket.current.emit("signal", { target: sender, signal: answer });
+      } else if (signal.type === "answer") {
+        await peerConnection.current.setRemoteDescription(new RTCSessionDescription(signal));
+      } else if (signal.candidate) {
+        await peerConnection.current.addIceCandidate(new RTCIceCandidate(signal));
       }
     });
+
+    // Get user media
+    navigator.mediaDevices
+      .getUserMedia({ audio: true, video: false })
+      .then((stream) => {
+        setLocalStream(stream);
+      })
+      .catch((err) => console.error("Error accessing media devices:", err));
 
     return () => {
       socket.current.disconnect();
     };
   }, []);
 
-  const createPeerConnection = (target) => {
-    peerConnection.current = new RTCPeerConnection();
-    stream
-      .getTracks()
-      .forEach((track) => peerConnection.current.addTrack(track, stream));
+  const startConnection = (targetId) => {
+    setTarget(targetId);
 
+    // Create PeerConnection
+    peerConnection.current = new RTCPeerConnection(ICE_SERVERS);
+
+    // Add local stream to the connection
+    localStream.getTracks().forEach((track) => {
+      peerConnection.current.addTrack(track, localStream);
+    });
+
+    // Handle remote stream
+    peerConnection.current.ontrack = (event) => {
+      setRemoteStream(event.streams[0]);
+    };
+
+    // Handle ICE candidates
     peerConnection.current.onicecandidate = (event) => {
       if (event.candidate) {
         socket.current.emit("signal", {
-          target,
+          target: targetId,
           signal: event.candidate,
         });
       }
     };
 
-    peerConnection.current.ontrack = (event) => {
-      const remoteAudio = document.getElementById("remote-audio");
-      remoteAudio.srcObject = event.streams[0];
-      remoteAudio.play();
-    };
-  };
-
-  const startCall = async (target) => {
-    if (!peerConnection.current) {
-      createPeerConnection(target);
-    }
-    if (stream) {
-      const offer = await peerConnection.current.createOffer();
-      await peerConnection.current.setLocalDescription(offer);
-      socket.current.emit("signal", {
-        target,
-        signal: offer,
-      });
-    } else {
-      console.error("Stream not available for call");
-    }
-  };
-
-  const selectUser = (user) => {
-    setCurrentUser(user);
-    if (!stream) {
-      navigator.mediaDevices
-        .getUserMedia({ audio: true })
-        .then((localStream) => {
-          setStream(localStream);
-          const localAudio = document.getElementById("local-audio");
-          localAudio.srcObject = localStream;
-          localAudio.play();
-        })
-        .catch((error) => {
-          console.error("Error accessing media devices:", error);
+    // Create an offer
+    peerConnection.current
+      .createOffer()
+      .then((offer) => {
+        return peerConnection.current.setLocalDescription(offer);
+      })
+      .then(() => {
+        socket.current.emit("signal", {
+          target: targetId,
+          signal: peerConnection.current.localDescription,
         });
-    }
+      })
+      .catch((err) => console.error("Error creating offer:", err));
   };
 
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
-      {/* Список пользователей */}
-      <div style={{ flex: 1, borderRight: "1px solid #ccc", padding: "10px" }}>
-        <h3>Пользователи</h3>
-        {users.map((user) => (
-          <div
-            key={user.id}
-            onClick={() => selectUser(user)}
-            style={{
-              cursor: "pointer",
-              padding: "10px",
-              backgroundColor:
-                currentUser?.id === user.id ? "#f0f0f0" : "transparent",
-            }}
-          >
-            {user.name || `Пользователь ${user.id}`}
-          </div>
-        ))}
-      </div>
+    <div>
+      <h1>Voice Chat</h1>
+      <h2>Connected Users</h2>
+      {users.map((user) => (
+        <button key={user.id} onClick={() => startConnection(user.id)}>
+          Call User {user.id}
+        </button>
+      ))}
 
-      {/* Кабинет пользователя */}
-      <div style={{ flex: 2, padding: "10px" }}>
-        {currentUser ? (
-          <>
-            <h3>
-              Кабинет: {currentUser.name || `Пользователь ${currentUser.id}`}
-            </h3>
-            <button onClick={() => startCall(currentUser.id)}>Позвонить</button>
-          </>
-        ) : (
-          <p>Выберите пользователя из списка</p>
-        )}
-      </div>
+      <h2>Local Audio</h2>
+      {localStream && <audio autoPlay muted ref={(ref) => ref && (ref.srcObject = localStream)} />}
 
-      {/* Аудио для локального и удалённого стримов */}
-      <audio id="local-audio" style={{ display: "none" }}></audio>
-      <audio id="remote-audio" style={{ display: "none" }}></audio>
+      <h2>Remote Audio</h2>
+      {remoteStream && <audio autoPlay ref={(ref) => ref && (ref.srcObject = remoteStream)} />}
     </div>
   );
 };
 
-export default App;
+export default VoiceChat;

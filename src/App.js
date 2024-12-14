@@ -10,7 +10,7 @@ const App = () => {
 
   useEffect(() => {
     // Подключение к серверу WebSocket
-    socket.current = io("http://localhost:5000"); // Укажите ваш сервер
+    socket.current = io("https://voice-server-qsaq.onrender.com"); // Укажите ваш сервер
 
     // Получение списка пользователей
     socket.current.on("users", (userList) => {
